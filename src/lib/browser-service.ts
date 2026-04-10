@@ -389,6 +389,203 @@ class BrowserService {
   }
 
   /**
+   * 获取视频预览 URL（无水印版本）
+   * 通过浏览器打开视频页面，拦截网络响应获取无水印视频 URL
+   * 创建独立的浏览器上下文，不影响现有的 fetch 签名会话
+   *
+   * @param itemId 视频项目 ID
+   * @param token sessionid（raw，不含前缀）
+   * @param region 区域: "cn" 或 "international"
+   * @returns 无水印的视频 URL，失败返回 null
+   */
+  async getVideoPreviewUrl(
+    itemId: string,
+    token: string,
+    region: "cn" | "international" = "international"
+  ): Promise<string | null> {
+    let tempContext: BrowserContext | null = null;
+    try {
+      const browser = await this.ensureBrowser();
+      const sessionToken = region === "international" && /^[a-z]{2}-/i.test(token)
+        ? token.substring(3)
+        : token;
+
+      logger.info(`BrowserService: [preview] 尝试获取无水印视频预览 URL，item_id: ${itemId}`);
+
+      // 创建专用上下文：不屏蔽资源，让页面正常渲染
+      tempContext = await browser.newContext({
+        userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
+        viewport: { width: 1920, height: 1080 },
+        locale: region === "international" ? "en-US" : "zh-CN",
+      });
+
+      if (region === "international") {
+        await tempContext.setExtraHTTPHeaders({
+          "x-requested-with": "XMLHttpRequest",
+          "loc": "en",
+        });
+      }
+
+      // 注入 cookies
+      const cookies = region === "international"
+        ? getCookiesForBrowserInternational(sessionToken)
+        : getCookiesForBrowser(sessionToken);
+      await tempContext.addCookies(cookies);
+
+      // 只屏蔽字体，允许图片/媒体/样式表正常加载
+      await tempContext.route("**/*", (route) => {
+        if (route.request().resourceType() === "font") {
+          return route.abort();
+        }
+        return route.continue();
+      });
+
+      const page = await tempContext.newPage();
+
+      // 国际版：设置 API 路由重写
+      if (region === "international") {
+        await this.setupInternationalApiRoute(page);
+      }
+
+      // 网络响应拦截器：从 API 响应中捕获无水印视频 URL
+      let capturedUrl: string | null = null;
+      const captureVideoUrl = async (response: any) => {
+        try {
+          const url = response.url();
+          const contentType = response.headers()["content-type"] || "";
+
+          // 方式1：拦截视频 CDN 的直接请求
+          if ((url.includes("v16-cc.capcut.com") || url.includes("v16-cd.capcut.com") || url.includes("v16-normal-sg.capcutapi.com") || url.includes("tos-v-i-sg")) &&
+              !url.includes("display_watermark_busi_aigc")) {
+            logger.info(`BrowserService: [preview] [拦截] 捕获到视频 CDN URL: ${url.substring(0, 150)}...`);
+            capturedUrl = url;
+          }
+
+          // 方式2：从 JSON API 响应中提取视频 URL
+          if (contentType.includes("json") || contentType.includes("text")) {
+            try {
+              const text = await response.text();
+              // 搜索 capcut CDN 视频路径
+              const urlMatches = text.match(/https?:\/\/[^"'\\s]+capcut(?:api)?\.(com|us)[^"'\\s]*/g) || [];
+              for (const matchUrl of urlMatches) {
+                if ((matchUrl.includes("v16-") || matchUrl.includes("video/") || matchUrl.includes(".mp4") || matchUrl.includes("tos-v")) &&
+                    !matchUrl.includes("display_watermark_busi_aigc") &&
+                    !capturedUrl) {
+                  logger.info(`BrowserService: [preview] [拦截] 从 API 响应提取到视频 URL: ${matchUrl.substring(0, 150)}...`);
+                  capturedUrl = matchUrl;
+                  break;
+                }
+              }
+            } catch {}
+          }
+        } catch {}
+      };
+
+      page.on("response", captureVideoUrl);
+
+      // 导航到视频列表页
+      const listUrl = region === "international"
+        ? "https://dreamina.capcut.com/ai-tool/video/generate"
+        : "https://jimeng.jianying.com/ai-tool/video/generate";
+      logger.info(`BrowserService: [preview] 导航到 ${listUrl}`);
+      await page.goto(listUrl, { waitUntil: "networkidle", timeout: 45000 });
+
+      // 等待页面初始化
+      await new Promise(resolve => setTimeout(resolve, 5000));
+
+      // 检查页面 DOM 中已有的 video 元素（页面可能自动播放最新视频）
+      const checkDomVideos = async (): Promise<string | null> => {
+        const srcs: string[] = await page.evaluate(() => {
+          const videos = document.querySelectorAll("video");
+          return Array.from(videos).map((v: any) => v.src || v.currentSrc || "").filter(Boolean);
+        });
+        logger.info(`BrowserService: [preview] DOM 中找到 ${srcs.length} 个 video 元素`);
+        for (const src of srcs) {
+          if (!src.includes("display_watermark_busi_aigc")) {
+            logger.info(`BrowserService: [preview] DOM 找到无水印 URL: ${src.substring(0, 150)}...`);
+            return src;
+          }
+          logger.info(`BrowserService: [preview] 跳过带水印视频: ${src.substring(0, 80)}...`);
+        }
+        return null;
+      };
+
+      let result = await checkDomVideos();
+      if (result) return result;
+      if (capturedUrl) return capturedUrl;
+
+      // DOM 没找到，尝试悬停触发预览
+      logger.info(`BrowserService: [preview] 尝试悬停触发视频预览...`);
+
+      // 尝试多种选择器找到视频卡片
+      const selectors = [
+        '[class*="card"]',
+        '[class*="item"]',
+        '[class*="history"]',
+        '[data-testid*="item"]',
+        '[data-testid*="card"]',
+        '[class*="generate"] [class*="result"]',
+        '[class*="video"] [class*="thumb"]',
+        '[class*="media"]',
+        '[class*="work"]',
+        '[class*="content"] [class*="cover"]',
+      ];
+
+      for (const sel of selectors) {
+        if (capturedUrl) break;
+        try {
+          const cards = await page.$$(sel);
+          if (cards.length > 0) {
+            logger.info(`BrowserService: [preview] 选择器 "${sel}" 找到 ${cards.length} 个元素`);
+            const maxHover = Math.min(cards.length, 5);
+            for (let i = 0; i < maxHover && !capturedUrl; i++) {
+              try {
+                await cards[i].hover();
+                await new Promise(resolve => setTimeout(resolve, 3000));
+
+                // 检查网络拦截
+                if (capturedUrl) break;
+
+                // 检查 DOM
+                result = await checkDomVideos();
+                if (result) { capturedUrl = result; break; }
+              } catch {}
+            }
+          }
+        } catch {}
+      }
+
+      // 最后尝试滚动触发懒加载
+      if (!capturedUrl) {
+        logger.info(`BrowserService: [preview] 尝试滚动触发懒加载...`);
+        await page.evaluate(() => window.scrollBy(0, 500));
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        await page.evaluate(() => window.scrollBy(0, -500));
+        await new Promise(resolve => setTimeout(resolve, 2000));
+
+        result = await checkDomVideos();
+        if (result) capturedUrl = result;
+      }
+
+      if (capturedUrl) {
+        logger.info(`BrowserService: [preview] 成功获取无水印 URL: ${capturedUrl.substring(0, 150)}...`);
+      } else {
+        logger.warn(`BrowserService: [preview] 未能获取无水印视频 URL`);
+      }
+
+      return capturedUrl;
+    } catch (err) {
+      logger.error(`BrowserService: [preview] 获取视频预览 URL 失败: ${(err as Error).message}`);
+      return null;
+    } finally {
+      try {
+        if (tempContext) await tempContext.close();
+      } catch {}
+    }
+  }
+
+
+    /**
    * 关闭所有会话和浏览器实例
    */
   async close() {

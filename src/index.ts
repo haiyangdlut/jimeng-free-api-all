@@ -6,6 +6,7 @@ import "@/lib/initialize.ts";
 import server from "@/lib/server.ts";
 import routes from "@/api/routes/index.ts";
 import logger from "@/lib/logger.ts";
+import { initTokenPool } from '@/lib/token-pool.ts';
 
 const startupTime = performance.now();
 
@@ -18,6 +19,7 @@ const startupTime = performance.now();
   logger.info("Environment:", environment.env);
   logger.info("Service name:", config.service.name);
 
+  initTokenPool();
   server.attachRoutes(routes);
   await server.listen();
 

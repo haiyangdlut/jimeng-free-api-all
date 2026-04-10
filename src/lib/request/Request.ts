@@ -15,6 +15,8 @@ export default class Request {
     method: string;
     /** 请求URL */
     url: string;
+    /** 请求来源origin */
+    origin: string;
     /** 请求路径 */
     path: string;
     /** 请求载荷类型 */
@@ -44,6 +46,7 @@ export default class Request {
         const { time } = options;
         this.method = ctx.request.method;
         this.url = ctx.request.url;
+        this.origin = ctx.origin || '';
         this.path = ctx.request.path;
         this.type = ctx.request.type;
         this.headers = ctx.request.headers || {};

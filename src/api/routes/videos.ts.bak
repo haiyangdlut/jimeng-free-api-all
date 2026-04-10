@@ -308,52 +308,6 @@ export default {
             };
         },
 
-
-        // ========== 国际版视频生成接口（内置重试）：generationst ==========
-        '/international/generationst': async (request: Request) => {
-            const maxRetries = 5;
-            const contentType = request.headers['content-type'] || '';
-            const isMultiPart = contentType.startsWith('multipart/form-data');
-
-            // 透传原始请求体
-            let body = { ...request.body };
-            delete body['response_format'];
-
-            let lastError: any = null;
-            for (let attempt = 1; attempt <= maxRetries; attempt++) {
-                try {
-                    const result = await fetch(`${request.origin}/v1/videos/international/generations`, {
-                        method: 'POST',
-                        headers: {
-                            'Authorization': request.headers.authorization || '',
-                            'Content-Type': contentType,
-                        },
-                        body: JSON.stringify(body),
-                    });
-                    const data = await result.json();
-
-                    if (data.code === -2001) {
-                        const errMsg = data.message || '';
-                        if (errMsg.includes('Not enough credits') || errMsg.includes('no relevant benefits') || errMsg.includes('login error')) {
-                            lastError = data;
-                            if (attempt < maxRetries) {
-                                logger.warn(`[/international/generationst] Attempt ${attempt}/${maxRetries} failed with -2001, retrying...`);
-                                continue;
-                            }
-                        }
-                    }
-                    return data;
-                } catch (err: any) {
-                    lastError = err;
-                    if (attempt < maxRetries) {
-                        logger.warn(`[/international/generationst] Attempt ${attempt}/${maxRetries} threw error: ${err.message}, retrying...`);
-                        continue;
-                    }
-                }
-            }
-            return lastError;
-        },
-
         // ========== 国际版异步视频生成接口：提交任务 ==========
         '/international/generations/async': async (request: Request) => {
             const contentType = request.headers['content-type'] || '';

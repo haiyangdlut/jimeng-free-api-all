@@ -2582,8 +2582,7 @@ export async function generateInternationalSeedanceVideo(
   }
 
   const regionInfo = parseRegionFromToken(refreshToken);
-  if (regionInfo.isCN) throw new APIException(EX.API_REQUEST_FAILED, "国际 Seedance 接口仅接受国际 token（hk-/jp-/sg-/al-/az-/bh-/ca-/cl-/de-/gb-/gy-/iq-/it-/jo-/kg-/om-/pk-/sa-/se-/tr-/tz-/ve-）");
-  if (regionInfo.isUS) throw new APIException(EX.API_REQUEST_FAILED, "US token 暂不支持国际 Seedance 2.0 / 2.0-fast");
+  if (regionInfo.isCN) throw new APIException(EX.API_REQUEST_FAILED, "国际 Seedance 接口仅接受国际 token（hk-/jp-/sg-/al-/az-/bh-/ca-/cl-/de-/gb-/gy-/iq-/it-/jo-/kg-/om-/pk-/sa-/se-/tr-/tz-/ve-/us-）");
 
   const actualDuration = Math.max(4, Math.min(15, duration));
   const { width, height } = resolveVideoResolution(resolution, ratio);
@@ -2869,7 +2868,6 @@ async function _generateInternationalSeedanceVideoWithHistoryId(
 ): Promise<{ url: string; historyId: string }> {
   const regionInfo = parseRegionFromToken(refreshToken);
   if (regionInfo.isCN) throw new APIException(EX.API_REQUEST_FAILED, "国际 Seedance 接口仅接受国际 token");
-  if (regionInfo.isUS) throw new APIException(EX.API_REQUEST_FAILED, "US token 暂不支持国际 Seedance 2.0 / 2.0-fast");
 
   const actualDuration = Math.max(4, Math.min(15, duration));
   const { width, height } = resolveVideoResolution(resolution, ratio);

@@ -311,7 +311,7 @@ export default {
 
         // ========== 国际版视频生成接口（内置重试）：generationst ==========
         '/international/generationst': async (request: Request) => {
-            const maxRetries = 5;
+            const maxRetries = 10;
             const contentType = request.headers['content-type'] || '';
             const isMultiPart = contentType.startsWith('multipart/form-data');
 

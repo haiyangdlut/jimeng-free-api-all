@@ -71,6 +71,7 @@ const FILE_MAX_SIZE = 100 * 1024 * 1024;
 
 // 支持的国际区域前缀 → (region, lan, loc) 映射
 const INTERNATIONAL_REGION_MAP: Record<string, { region: string; lan: string; loc: string }> = {
+  us: { region: "US", lan: "en", loc: "us" },
   hk: { region: "HK", lan: "en", loc: "hk" },
   jp: { region: "JP", lan: "ja", loc: "jp" },
   sg: { region: "SG", lan: "en", loc: "sg" },
@@ -113,18 +114,16 @@ export interface TokenWithProxy {
 
 export function parseRegionFromToken(refreshToken: string): RegionInfo {
   const token = refreshToken.toLowerCase();
-  const isUS = token.startsWith("us-");
   // 尝试匹配 2 字母国际区域前缀 (xx-)
   const prefixMatch = token.match(/^([a-z]{2})-/);
   let regionCode = "CN";
   let isInternational = false;
+  let isUS = false;
+
   if (prefixMatch && INTERNATIONAL_REGION_MAP[prefixMatch[1]]) {
     regionCode = INTERNATIONAL_REGION_MAP[prefixMatch[1]].region;
     isInternational = true;
-  }
-  if (isUS) {
-    regionCode = "US";
-    isInternational = true;
+    isUS = prefixMatch[1] === "us";
   }
 
   return {
@@ -365,10 +364,9 @@ export async function request(
       // 流式响应直接返回response
       if (options.responseType == "stream") return response;
       
-      // 记录响应数据摘要
-      const responseDataSummary = JSON.stringify(response.data).substring(0, 500) + 
-        (JSON.stringify(response.data).length > 500 ? "..." : "");
-      logger.info(`响应数据摘要: ${responseDataSummary}`);
+      // 记录完整响应数据
+      const responseDataStr = JSON.stringify(response.data);
+      logger.info(`响应数据 (${responseDataStr.length} bytes): ${responseDataStr}`);
       
       // 检查HTTP状态码
       if (response.status >= 400) {
